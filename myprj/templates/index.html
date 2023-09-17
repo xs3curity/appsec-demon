@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>File Manager</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+        }
+        
+        h1 {
+            text-align: center;
+            color: #333;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        }
+
+        h2 {
+            color: #333;
+        }
+
+        ul {
+            list-style-type: none;
+            padding: 0;
+        }
+
+        li {
+            margin: 10px 0;
+        }
+
+        a {
+            text-decoration: none;
+            color: #007BFF;
+        }
+
+        a:hover {
+            text-decoration: underline;
+        }
+
+        .file-content {
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>File Manager</h1>
+        <p>Current Directory: {{ current_dir }}</p>
+
+        {% if directories %}
+        <h2>Directories</h2>
+        <ul>
+            {% for directory in directories %}
+                <li><a href="?dir={{ current_dir }}/{{ directory }}">{{ directory }}</a></li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+
+        <h2>Files</h2>
+        <ul>
+            {% for file in files %}
+                <li>
+                    {{ file }}
+                    <a href="/read_file?file={{ current_dir }}/{{ file }}" target="_blank">Read</a>
+                </li>
+            {% endfor %}
+        </ul>
+    </div>
+</body>
+</html>
