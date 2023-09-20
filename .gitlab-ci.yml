@@ -1,5 +1,5 @@
 sast:
-  stage: sast
+  stage: test
   script:
     - echo "Do your build here" > sast
 
