@@ -1,0 +1,19 @@
+sast:
+  stage: sast
+  script:
+    - echo "Do your build here" > sast
+
+build:
+  stage: build
+  script:
+    - echo "Do a test here" > build
+
+dast:
+  stage: test
+  script:
+    - echo "Do another parallel test here" > dast
+
+deploy:
+  stage: deploy
+  script:
+    - echo "Do your deploy here" > deploy
