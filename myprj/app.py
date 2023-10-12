@@ -32,10 +32,12 @@ def list_files():
 def read_file():
     file_path = request.args.get('file')
     if file_path:
-        with open(file_path, 'r') as file:
-            file_content = file.read()
-        return '<pre style="background: gray; padding: 1rem 2rem">' + file_content + '</pre>'
-    return 'File not found.'
+        try:
+            with open(file_path, 'r') as file:
+                file_content = file.read()
+            return '<pre style="background: gray; padding: 1rem 2rem">' + file_content + '</pre>'
+        except Exception as err:
+            return 'File not found.'
 
 
 if __name__ == '__main__':
