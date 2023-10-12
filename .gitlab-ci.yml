@@ -6,9 +6,12 @@ stages:
 SAST:
   stage: build
   script:
-    - echo "Running SAST"
+    - sudo apt install python3-pip
+    - sudo pip3 install bandit
+    - bandit -r .
   tags:
     - CI-CD
+  allow_failure: true
 
 Build:
   stage: build
