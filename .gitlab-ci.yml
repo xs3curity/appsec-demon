@@ -6,9 +6,8 @@ stages:
 SAST:
   stage: build
   script:
-    - sudo apt install python3-pip
-    - sudo pip3 install bandit
-    - bandit -r .
+    - docker pull python:latest
+    - docker run --volume ./:/app python bash -c 'pip3 install bandit && bandit -r /app'
   tags:
     - CI-CD
   allow_failure: true
