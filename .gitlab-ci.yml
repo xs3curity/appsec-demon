@@ -1,19 +1,27 @@
-sast:
+SAST:
   stage: test
   script:
     - echo "Do your build here" > sast
+  tags:
+    - CI-CD
 
-build:
+Build:
   stage: build
   script:
     - echo "Do a test here" > build
+  tags:
+    - CI-CD
 
-dast:
+DAST:
   stage: test
   script:
     - echo "Do another parallel test here" > dast
+  tags:
+    - CI-CD
 
-deploy:
+Deploy:
   stage: deploy
   script:
     - echo "Do your deploy here" > deploy
+  tags:
+    - CI-CD
