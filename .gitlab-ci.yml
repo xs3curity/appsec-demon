@@ -1,24 +1,39 @@
-sast:
+SAST:
   stage: test
   script:
     - echo "Do your build here"
+<<<<<<< HEAD
+=======
+  tags:
+    - CI-CD
+>>>>>>> dcf09abf7a11ba0efd9512af97b3214f4226d8cd
 
-build:
+Build:
   stage: build
   script:
+<<<<<<< HEAD
     - docker-compose build
 
 unittest:
   stage: test
   script:
     - docker run appsec_demon_app python tests.py
+=======
+    - echo "Do a test here"
+  tags:
+    - CI-CD
+>>>>>>> dcf09abf7a11ba0efd9512af97b3214f4226d8cd
 
-dast:
+DAST:
   stage: test
   script:
-    - echo "Do another parallel test here" > dast
+    - echo "Do another parallel test here"
+  tags:
+    - CI-CD
 
-deploy:
+Deploy:
   stage: deploy
   script:
-    - echo "Do your deploy here" > deploy
+    - echo "Do your deploy here"
+  tags:
+    - CI-CD
