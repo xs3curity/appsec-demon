@@ -2,16 +2,22 @@ SAST:
   stage: test
   script:
     - echo "Do your build here"
+  tags:
+    - CI-CD
 
 Build:
   stage: build
   script:
     - docker-compose build
+  tags:
+    - CI-CD
 
 unittest:
   stage: test
   script:
     - docker run appsec_demon_app python tests.py
+  tags:
+    - CI-CD
 
 DAST:
   stage: test
