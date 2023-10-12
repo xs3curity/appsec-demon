@@ -1,12 +1,17 @@
 sast:
   stage: test
   script:
-    - echo "Do your build here" > sast
+    - echo "Do your build here"
 
 build:
   stage: build
   script:
-    - echo "Do a test here" > build
+    - docker-compose build
+
+unittest:
+  stage: test
+  script:
+    - docker run appsec_demon_app python tests.py
 
 dast:
   stage: test
