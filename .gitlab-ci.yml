@@ -1,7 +1,12 @@
+stages:
+  - build
+  - test
+  - deploy
+
 SAST:
-  stage: test
+  stage: build
   script:
-    - echo "Do your build here"
+    - echo "Running SAST"
   tags:
     - CI-CD
 
@@ -29,14 +34,11 @@ Deploy:
     - echo "Do your deploy here"
   tags:
     - CI-CD
-  needs:
-    - Build
-    - Unittest
 
 DAST:
-  stage: test
+  stage: deploy
   script:
-    - echo "Do another parallel test here"
+    - echo "Running DAST"
   tags:
     - CI-CD
   needs:
