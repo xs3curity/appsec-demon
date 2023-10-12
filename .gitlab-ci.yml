@@ -11,20 +11,17 @@ Build:
     - docker-compose build
   tags:
     - CI-CD
+  needs:
+    - SAST
 
-unittest:
+Unittest:
   stage: test
   script:
     - docker run appsec_demon_app python tests.py
   tags:
     - CI-CD
-
-DAST:
-  stage: test
-  script:
-    - echo "Do another parallel test here"
-  tags:
-    - CI-CD
+  needs:
+    - Build
 
 Deploy:
   stage: deploy
@@ -32,3 +29,15 @@ Deploy:
     - echo "Do your deploy here"
   tags:
     - CI-CD
+  needs:
+    - Build
+    - Unittest
+
+DAST:
+  stage: test
+  script:
+    - echo "Do another parallel test here"
+  tags:
+    - CI-CD
+  needs:
+    - Deploy
