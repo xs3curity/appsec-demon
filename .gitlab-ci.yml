@@ -53,4 +53,5 @@ DAST:
   artifacts:
     paths:
       - "reports/report.html"
+    when: always
   allow_failure: true
