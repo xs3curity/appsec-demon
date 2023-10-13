@@ -44,7 +44,7 @@ DAST:
   script:
     - docker pull owasp/zap2docker-stable
     - rm -f ./report.html
-    - docker run -it --volume $(pwd):/zap/wrk  --net=host --rm owasp/zap2docker-stable zap-full-scan.py -t http://192.168.100.20:80 -r report.html
+    - docker run --volume $(pwd):/zap/wrk  --net=host --rm owasp/zap2docker-stable zap-full-scan.py -t http://192.168.100.20:80 -r report.html
   tags:
     - CI-CD
   needs:
