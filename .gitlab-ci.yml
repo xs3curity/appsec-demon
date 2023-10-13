@@ -33,9 +33,11 @@ Unittest:
 Deploy:
   stage: deploy
   script:
-    - echo "Do your deploy here"
+    - docker-compose down
+    - docker-compose build
+    - docker-compose up -d
   tags:
-    - CI-CD
+    - prod-deploy
 
 DAST:
   stage: deploy
