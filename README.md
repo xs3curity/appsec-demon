@@ -1,4 +1,4 @@
-# Secure Pipeline Lab Setup
+# Secure Pipeline Lab
 
 ## High-Level Diagram
 
@@ -31,7 +31,8 @@ There is no staging for this lab
 
 ## Production
 
-Once unittests passed in CI/CD server, gitlab runner in production server pulls the code and deploys it using docker-compose
+Once unittests passed in CI/CD server, gitlab runner in production server pulls the code and deploys it using docker-compose.
+After deployment, a container runs zap scanner from CI/CD server, using production server as a target
 
 ## Monitoring
 
