@@ -1,10 +1,12 @@
 stages:
+  - sast
   - build
-  - test
+  - untittest
   - deploy
+  - dast
 
 SAST:
-  stage: build
+  stage: sast
   script:
     - docker pull python:latest
     - docker run --volume ./:/app python bash -c 'pip3 install bandit && bandit -r /app'
@@ -18,11 +20,9 @@ Build:
     - docker-compose build
   tags:
     - CI-CD
-  needs:
-    - SAST
 
 Unittest:
-  stage: test
+  stage: untittest
   script:
     - docker run appsec_demon_app python tests.py
   tags:
@@ -40,11 +40,12 @@ Deploy:
     - prod-deploy
 
 DAST:
-  stage: deploy
+  stage: dast
   script:
     - docker pull owasp/zap2docker-stable
     - rm -rf ./reports
-    - docker run --volume ./reports:/zap/wrk:rw  --net=host --rm owasp/zap2docker-stable zap-full-scan.py -t http://192.168.100.20:80 -r report.html
+    - mkdir ./reports
+    - docker run -it --volume ./reports:/zap/wrk  --net=host --rm owasp/zap2docker-stable zap-full-scan.py -t http://192.168.100.20:80 -r report.html
   tags:
     - CI-CD
   needs:
