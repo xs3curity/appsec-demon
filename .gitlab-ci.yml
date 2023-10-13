@@ -1,7 +1,7 @@
 stages:
   - sast
   - build
-  - untittest
+  - unittest
   - deploy
   - dast
 
@@ -22,7 +22,7 @@ Build:
     - CI-CD
 
 Unittest:
-  stage: untittest
+  stage: unittest
   script:
     - docker run appsec_demon_app python tests.py
   tags:
@@ -45,7 +45,7 @@ DAST:
     - docker pull owasp/zap2docker-stable
     - rm -rf ./reports
     - mkdir ./reports
-    - docker run -it --volume ./reports:/zap/wrk  --net=host --rm owasp/zap2docker-stable zap-full-scan.py -t http://192.168.100.20:80 -r report.html
+    - docker run --volume ./reports:/zap/wrk  --net=host --rm owasp/zap2docker-stable zap-full-scan.py -t http://192.168.100.20:80 -r report.html
   tags:
     - CI-CD
   needs:
