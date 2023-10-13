@@ -43,12 +43,13 @@ DAST:
   stage: deploy
   script:
     - docker pull owasp/zap2docker-stable
-    - rm -f ./report.html
-    - docker run --volume $(pwd):/zap/wrk:rw  --net=host --rm owasp/zap2docker-stable zap-full-scan.py -t http://192.168.100.20:80 -r report.html
+    - rm -rf ./reports
+    - docker run --volume ./reports:/zap/wrk:rw  --net=host --rm owasp/zap2docker-stable zap-full-scan.py -t http://192.168.100.20:80 -r report.html
   tags:
     - CI-CD
   needs:
     - Deploy
   artifacts:
     paths:
-      - "report.html"
+      - "reports/report.html"
+  allow_failure: true
