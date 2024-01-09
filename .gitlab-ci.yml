@@ -12,6 +12,8 @@ SAST:
     - docker run --volume ./:/app python bash -c 'pip3 install bandit && bandit -r /app'
   tags:
     - CI-CD
+  only:
+    - prod
   allow_failure: true
 
 Build:
@@ -20,6 +22,8 @@ Build:
     - docker-compose build
   tags:
     - CI-CD
+  only:
+  - prod
 
 Unittest:
   stage: unittest
@@ -29,6 +33,8 @@ Unittest:
     - CI-CD
   needs:
     - Build
+  only:
+  - prod
 
 Deploy:
   stage: deploy
@@ -38,6 +44,8 @@ Deploy:
     - docker-compose up -d
   tags:
     - prod-deploy
+  only:
+  - prod
 
 DAST:
   stage: dast-cstm
@@ -48,6 +56,8 @@ DAST:
     - docker run --volume ./reports:/zap/wrk --user root --net=host --rm owasp/zap2docker-stable zap-full-scan.py -t http://192.168.56.100:80 -r report.html
   tags:
     - CI-CD
+  only:
+  - prod
   needs:
     - Deploy
   artifacts:
