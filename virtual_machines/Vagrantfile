@@ -31,7 +31,7 @@ Vagrant.configure("2") do |config|
       vb.cpus = 1
     end
 
-    ci_cd.vm.network "public_network", ip: ENV['CI_CD_SERVER_IP']
+    ci_cd.vm.network "public_network", ip: ENV['CI_CD_SERVER_IP'], bridge: ENV['NIC']
 
     ci_cd.vm.provision "shell" do |shell|
       shell.env = {"PROJECT_ID" => ENV['PROJECT_ID'], "GITLAB_ACCESS_TOKEN" => ENV['GITLAB_ACCESS_TOKEN'], "CI_CD_SERVER_IP" => ENV['CI_CD_SERVER_IP'], "PROD_SERVER_IP" => ENV['PROD_SERVER_IP']}
@@ -51,7 +51,7 @@ Vagrant.configure("2") do |config|
       vb.cpus = 1
     end
 
-    prod.vm.network "public_network", ip: ENV['PROD_SERVER_IP']
+    prod.vm.network "public_network", ip: ENV['PROD_SERVER_IP'], bridge: ENV['NIC']
 
     prod.vm.provision "shell" do |shell|
       shell.env = {"PROJECT_ID" => ENV['PROJECT_ID'], "GITLAB_ACCESS_TOKEN" => ENV['GITLAB_ACCESS_TOKEN'], "CI_CD_SERVER_IP" => ENV['CI_CD_SERVER_IP'], "PROD_SERVER_IP" => ENV['PROD_SERVER_IP']}
