@@ -8,32 +8,34 @@
 
 {{ DIAGRAM HERE }}
 
-## Development
+## Host Pre-requisites
+- 4GB of Memory
+- 4 CPU cores
+- 100GB of storage
+- Internet connection
+- Git
+- Oracle Virtualbox
+- Vagrant
 
-Code gets pushed to Gitlab
 
-## Code Repository
+## Setup
 
-If prod branch, pipeline gets triggered
+Clone the repository and change directory to `appsec_demon`
 
-There are two gitlab runners to keep CI/CD and Production servers isolated. 
+```bash
+git clone https://gitlab.com/khazarhajiyev/appsec_demon.git
+cd appsec_demon
+```
 
-## Build
+Change directory to `virtual_machines`, copy `.env.sample` to `.env` and fill its content with your favorite text editor
 
-Build happens twice (it is actually nonsense for now)
+```bash
+cd virtual_machines
+cp .env.sample .env
+```
 
-- First time in CI/CD server for running unit test in docker container
-- Second time in Production server to deploy
+Run `vagrant up` to set up the virtual machines
 
-## Staging
-
-There is no staging for this lab
-
-## Production
-
-Once unittests passed in CI/CD server, gitlab runner in production server pulls the code and deploys it using docker-compose.
-After deployment, a container runs zap scanner from CI/CD server, using production server as a target
-
-## Monitoring
-
-We can integrate Elastic Stack later on 
+```bash
+vagrant up
+```
