@@ -8,7 +8,7 @@
 
 {{ DIAGRAM HERE }}
 
-## Host Pre-requisites
+## Requirements
 - 4GB of Memory
 - 4 CPU cores
 - 100GB of storage
