@@ -2,7 +2,7 @@
 
 ## High-Level Diagram
 
-![Untitled](images/HLD.png)
+![HLD](images/HLD.png)
 
 ## Low-level Diagram
 
@@ -39,3 +39,7 @@ Run `vagrant up` to set up the virtual machines
 ```bash
 vagrant up
 ```
+
+To validate your runners successfully registered, go to `appsec_demon` project in your Gitlab account, click `Settings` from left menu, then click `CI/CD` from dropdown menu. In the page opened, look for `Runners` and click `Expand`. You should see a similar result
+
+![HLD](images/RUNNERS.png)
