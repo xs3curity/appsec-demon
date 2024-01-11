@@ -34,11 +34,12 @@ Vagrant.configure("2") do |config|
     ci_cd.vm.network "public_network", ip: ENV['CI_CD_SERVER_IP'], bridge: ENV['NIC']
 
     ci_cd.vm.provision "shell" do |shell|
-      shell.env = {"PROJECT_ID" => ENV['PROJECT_ID'], "GITLAB_ACCESS_TOKEN" => ENV['GITLAB_ACCESS_TOKEN'], "CI_CD_SERVER_IP" => ENV['CI_CD_SERVER_IP'], "PROD_SERVER_IP" => ENV['PROD_SERVER_IP']}
+      shell.env = {"PROJECT_ID" => ENV['PROJECT_ID'], "GITLAB_ACCESS_TOKEN" => ENV['GITLAB_ACCESS_TOKEN'], "CI_CD_SERVER_IP" => ENV['CI_CD_SERVER_IP'], "PROD_SERVER_IP" => ENV['PROD_SERVER_IP'], "DOCKER_HUB_ACCESS_TOKEN" => ENV['DOCKER_HUB_ACCESS_TOKEN']}
       shell.inline = <<-SHELL
       TOKEN=$(curl --silent --request POST --url "https://gitlab.com/api/v4/user/runners" --data "runner_type=project_type" --data "project_id=$PROJECT_ID" --data "description=ci_cd_server" --data "tag_list=CI-CD" --header "PRIVATE-TOKEN: $GITLAB_ACCESS_TOKEN" | jq .token | sed 's/"//g')
       gitlab-runner register --non-interactive --name="CI_CD_Server" --url="https://gitlab.com"   --token="$TOKEN" --executor="shell"
       echo -e "\n\n$PROD_SERVER_IP\t\tappsec.demon.lab" >> /etc/hosts
+      echo $DOCKER_HUB_ACCESS_TOKEN | sudo docker login -u $DOCKER_HUB_USERNAME --password-stdin
       SHELL
     end
   end
@@ -54,10 +55,11 @@ Vagrant.configure("2") do |config|
     prod.vm.network "public_network", ip: ENV['PROD_SERVER_IP'], bridge: ENV['NIC']
 
     prod.vm.provision "shell" do |shell|
-      shell.env = {"PROJECT_ID" => ENV['PROJECT_ID'], "GITLAB_ACCESS_TOKEN" => ENV['GITLAB_ACCESS_TOKEN'], "CI_CD_SERVER_IP" => ENV['CI_CD_SERVER_IP'], "PROD_SERVER_IP" => ENV['PROD_SERVER_IP']}
+      shell.env = {"PROJECT_ID" => ENV['PROJECT_ID'], "GITLAB_ACCESS_TOKEN" => ENV['GITLAB_ACCESS_TOKEN'], "CI_CD_SERVER_IP" => ENV['CI_CD_SERVER_IP'], "PROD_SERVER_IP" => ENV['PROD_SERVER_IP'], "DOCKER_HUB_ACCESS_TOKEN" => ENV['DOCKER_HUB_ACCESS_TOKEN']}
       shell.inline = <<-SHELL
       TOKEN=$(curl --silent --request POST --url "https://gitlab.com/api/v4/user/runners" --data "runner_type=project_type" --data "project_id=$PROJECT_ID" --data "description=prod_server" --data "tag_list=prod-deploy" --header "PRIVATE-TOKEN: $GITLAB_ACCESS_TOKEN" | jq .token | sed 's/"//g')
       gitlab-runner register --non-interactive --name="Prod_Server" --url="https://gitlab.com"   --token="$TOKEN" --executor="shell"
+      echo $DOCKER_HUB_ACCESS_TOKEN | sudo docker login -u $DOCKER_HUB_USERNAME --password-stdin
       SHELL
     end
   end

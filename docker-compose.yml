@@ -3,15 +3,13 @@ services:
   app:
     container_name: app
     restart: always
-    build:
-      context: ./myprj
+    image: ${DOCKER_HUB_USERNAME}/${DOCKER_HUB_REPOSITORY}:app
     ports:
       - "8000:8000"
   nginx:
     container_name: proxy
     restart: always
-    build:
-      context: ./nginx
+    image: ${DOCKER_HUB_USERNAME}/${DOCKER_HUB_REPOSITORY}:nginx
     ports:
       - "80:80"
     depends_on:
