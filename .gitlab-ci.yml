@@ -21,6 +21,8 @@ Build:
   script:
     - echo $DOCKER_HUB_ACCESS_TOKEN | docker login -u $DOCKER_HUB_USERNAME --password-stdin
     - docker-compose build
+    - docker tag appsec_demon_app:latest $USERNAME/$REPOSITORY:app
+    - docker tag appsec_demon_nginx:latest $USERNAME/$REPOSITORY:nginx
   tags:
     - CI-CD
   only:
