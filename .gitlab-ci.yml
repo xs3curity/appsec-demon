@@ -20,9 +20,13 @@ Build:
   stage: build
   script:
     - echo $DOCKER_HUB_ACCESS_TOKEN | docker login -u $DOCKER_HUB_USERNAME --password-stdin
-    - echo -e "DOCKER_HUB_USERNAME=$DOCKER_HUB_USERNAME\nDOCKER_HUB_REPOSITORY=$DOCKER_HUB_REPOSITORY" > .env | docker-compose build
+    - echo -e "DOCKER_HUB_USERNAME=$DOCKER_HUB_USERNAME\nDOCKER_HUB_REPOSITORY=$DOCKER_HUB_REPOSITORY" > .env
+    - cd myprj && docker build -t appsec_demon_app . && cd ..
+    - cd myprj && docker build -t appsec_demon_nginx . && cd ..
     - docker tag appsec_demon_app:latest $DOCKER_HUB_USERNAME/$DOCKER_HUB_REPOSITORY:app
     - docker tag appsec_demon_nginx:latest $DOCKER_HUB_USERNAME/$DOCKER_HUB_REPOSITORY:nginx
+    - docker push $DOCKER_HUB_USERNAME/$DOCKER_HUB_REPOSITORY:app
+    - docker push $DOCKER_HUB_USERNAME/$DOCKER_HUB_REPOSITORY:nginx
   tags:
     - CI-CD
   only:
