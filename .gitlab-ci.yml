@@ -19,6 +19,7 @@ SAST:
 Build:
   stage: build
   script:
+    - echo $DOCKER_HUB_ACCESS_TOKEN | docker login -u $DOCKER_HUB_USERNAME --password-stdin
     - docker-compose build
   tags:
     - CI-CD
@@ -39,6 +40,7 @@ Unittest:
 Deploy:
   stage: deploy
   script:
+    - echo $DOCKER_HUB_ACCESS_TOKEN | docker login -u $DOCKER_HUB_USERNAME --password-stdin
     - docker-compose down
     - docker-compose build
     - docker-compose up -d
