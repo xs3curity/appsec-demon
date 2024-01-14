@@ -1,4 +1,4 @@
-# Secure Pipeline Lab
+# AppSec Demon - Secure Pipeline Lab
 
 ## High-Level Diagram
 
@@ -9,21 +9,24 @@
 {{ DIAGRAM HERE }}
 
 ## Requirements
+- A will to learn :)
 - 4GB of Memory
 - 4 CPU cores
-- 100GB of storage
+- 80GB of storage
 - Internet connection
 - Git
 - Oracle Virtualbox
 - Vagrant
+- Gitlab Account
+- Docker Hub Account
 
 
 ## Setup
 
-1. Fork the project
+1. Fork the repository
 
 2. Clone the repository and change directory to `appsec_demon`.
-Do not forget to change your username in repository URL
+Do not forget to change your username in the repository URL
 
 ```bash
 git clone https://gitlab.com/{{YOUR_GITLAB_USERNAME}}/appsec_demon.git
@@ -38,24 +41,35 @@ cp env.sample .env
 ```
 
 The information you will need to fill in:
-- PROJECT_ID - you can get project id by navigating `settings` and then clicking `general` tab from the dropdown menu
-- GITLAB_ACCESS_TOKEN - offical guide explains better: [Create Personal Access Token](https://docs.gitlab.com/ee/tutorials/automate_runner_creation/?tab=Project#create-a-personal-access-token)
-- NIC - network interface name with internet access 
-- CI_CD_SERVER_IP - any empty address in your subnet
-- PROD_SERVER_IP - any empty address in your subnet
+- **PROJECT_ID** - you can get project id by navigating `settings` and then clicking `general` tab from the dropdown menu
+- **GITLAB_ACCESS_TOKEN** - offical guide explains better: [Create Personal Access Token](https://docs.gitlab.com/ee/tutorials/automate_runner_creation/?tab=Project#create-a-personal-access-token)
+- **NIC** - network interface name with internet access 
+- **CI_CD_SERVER_IP** - any empty address in your subnet
+- **PROD_SERVER_IP** - any empty address in your subnet
 
 
 4. Run `vagrant up` to set up the virtual machines
 
+
 ```bash
 vagrant up
 ```
+<span style="color:red; font-weight: bold">Note:</span> If you already have virtual machines named `ci_cd_server` or `prod_server`, you will need to go `virtual_machines/Vagranfile` and update them.
 
 5. To validate your runners successfully registered, go to `appsec_demon` project in your Gitlab account, click `Settings` from left menu, then click `CI/CD` from dropdown menu. In the page opened, look for `Runners` and click `Expand`. You should see a similar result
 
 ![RUNNERS](images/RUNNERS.png)
 
-6. Switch to `dev` branch, add a space to `update_file` and merge it to `prod` branch to trigger deployment 
+
+6. Add docker hub details to gitlab variables. Navigate `CI/CD` tab under `Settings` section and expand `Variables`. You will need to add informations below:
+- **DOCKER_HUB_ACCESS_TOKEN** - Go to `https://hub.docker.com/settings/security` and create a new access token and use it as value
+- **DOCKER_HUB_USERNAME** - USe your docker hub account username as value
+- **DOCKER_HUB_REPOSITORY** - Navigate `Repositories` and create a new repository. Use the newly created repository name as value
+
+![GITLAB_VARS](images/GITLAB_VARS.png)
+
+
+7. Switch to `dev` branch, add a space to `update_file` and merge it to `prod` branch to trigger deployment 
 
 ```bash
 cd ..
@@ -69,11 +83,11 @@ git merge dev
 git push origin prod
 ```
 
-7. Navigate `Pipeline` under `Build` section from left menu in repository to check if deployment is started. You should see similar result
+8. Navigate `Pipeline` under `Build` section from left menu in repository to check if deployment is started. You should see similar result
 
 ![PIPELINE](images/PIPELINE.png)
 
 
-8. Navigate using prod server's IP in browser to see if application is deployed and accessible (check .env file if you forgot the IP)
+9. Navigate using prod server's IP in browser to see if application is deployed and accessible (check .env file if you forgot the IP)
 
 ![APPLICATION](images/APPLICATION.png)
