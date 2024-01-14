@@ -12,5 +12,8 @@ services:
     image: ${DOCKER_HUB_USERNAME}/${DOCKER_HUB_REPOSITORY}:nginx
     ports:
       - "80:80"
+	volumes:
+	  - /var/log/nginx/access.log:/var/log/nginx/access.log
+	  - /var/log/nginx/error.log:/var/log/nginx/error.log
     depends_on:
       - app
