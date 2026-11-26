@@ -1,12 +1,58 @@
 # AppSec Demon - Secure Pipeline Lab
 
+A hands-on lab for building a secure CI/CD pipeline with GitHub Actions, two self-hosted runners in local VMs, and an **intentionally vulnerable** Flask file manager as the target.
+
+> [!WARNING]
+> `myprj/app.py` contains deliberate vulnerabilities (path traversal, XSS) for the scanners to find. Never expose the prod VM to the internet.
+
 ## High-Level Diagram
 
-![HLD](images/HLD.png)
+```mermaid
+flowchart LR
+    dev([Developer]) -- "git push / PR" --> gh[GitHub]
+    gh -- "PR + push: scans, build, tests" --> hosted[GitHub-hosted runner]
+    hosted -- "push to prod: SHA-tagged images" --> hub[(Docker Hub)]
+    gh -- "deploy job" --> prod[Prod VM<br/>runner: prod-deploy]
+    hub -- "docker compose pull" --> prod
+    gh -- "DAST job" --> ci[CI/CD VM<br/>runner: ci-cd]
+    ci -- "ZAP full scan" --> prod
+    hosted -. "SARIF" .-> sec[GitHub Security tab]
+    ci -. "DAST report artifact" .-> appsec([AppSec engineer])
+    sec -.-> appsec
+```
 
-## Low-level Diagram
+## Low-Level Diagram
 
-{{ DIAGRAM HERE }}
+```mermaid
+flowchart TD
+    subgraph hosted["GitHub-hosted (every PR and push to dev/prod)"]
+        secrets["Secret scan<br/>gitleaks, full history"]:::block
+        sast["SAST<br/>semgrep + bandit"]:::report
+        sca["SCA<br/>pip-audit on hashed lockfile"]:::block
+        lint["Dockerfile lint<br/>hadolint"]:::block
+        build["Build images, unit tests,<br/>trivy image scan, CycloneDX SBOM"]:::block
+        secrets & sast & sca & lint --> build
+    end
+    build -- "prod only" --> push["Push app-SHA / nginx-SHA to Docker Hub"]
+    push --> deploy["Deploy (prod-deploy runner, environment: prod)<br/>docker compose pull + up"]
+    deploy --> dast["DAST (ci-cd runner)<br/>ZAP full scan of appsec.demon.lab"]:::report
+
+    classDef block fill:#fde2e2,stroke:#c0392b,color:#000
+    classDef report fill:#e2ecfd,stroke:#2c5aa0,color:#000
+```
+
+Red jobs **fail the pipeline**. Blue jobs are **report-only**, because the app is vulnerable on purpose; their results land in the Security tab (SAST) and in a downloadable artifact (DAST).
+
+| Control | Tool | Blocks? |
+|---|---|---|
+| Secret scanning | gitleaks (full git history) | Yes |
+| SAST | Semgrep (`p/python`, `p/flask`), Bandit → Security tab | No (report) |
+| SCA / dependency check | pip-audit against `requirements.txt` (hash-pinned) | Yes |
+| Dockerfile lint | hadolint (warning and above) | Yes |
+| Container scanning | Trivy, fixable HIGH/CRITICAL | Yes |
+| SBOM | Trivy CycloneDX, uploaded as `sbom` artifact | n/a |
+| DAST | OWASP ZAP full scan, uploaded as `dast-report` artifact | No (report) |
+| Version pinning | Base images and tool images by digest, Actions by commit SHA, Python deps by hash; Dependabot keeps pip, Dockerfiles and Actions current | n/a |
 
 ## Requirements
 - A will to learn :)
@@ -15,79 +61,111 @@
 - 80GB of storage
 - Internet connection
 - Git
-- Oracle Virtualbox
-- Vagrant
-- Gitlab Account
-- Docker Hub Account
-
+- Oracle VirtualBox
+- Vagrant, plus the `vagrant-env` plugin (`vagrant plugin install vagrant-env`)
+- GitHub account
+- Docker Hub account
 
 ## Setup
 
-1. Fork the repository
+### 1. Fork and clone
 
-2. Clone the repository and change directory to `appsec_demon`.
-Do not forget to change your username in the repository URL
+Fork the repository. **Untick "Copy the `dev` branch only"**, because the pipeline deploys from the `prod` branch. Then clone your fork:
 
 ```bash
-git clone https://gitlab.com/{{YOUR_GITLAB_USERNAME}}/appsec_demon.git
-cd appsec_demon
+git clone https://github.com/<YOUR_GITHUB_USERNAME>/appsec-demon.git
+cd appsec-demon
 ```
 
-3. Change directory to `virtual_machines`, copy `env.sample` to `.env` and fill its content with your favorite text editor
+### 2. Lock down Actions on your fork
+
+The self-hosted runners execute jobs directly on your VMs. On a public repository, anyone can open a pull request that edits the workflow, so require approval before outside code runs:
+
+**Settings → Actions → General → Approval for running fork pull request workflows from contributors → "Require approval for all external contributors"**
+
+> 📸 _Screenshot to add: `images/ACTIONS_GENERAL.png` (this setting selected)_
+
+### 3. Add Docker Hub credentials
+
+Create a Docker Hub repository and an access token (`https://app.docker.com/settings/personal-access-tokens`, Read & Write). Then go to **Settings → Secrets and variables → Actions**:
+
+- **Secrets** tab → `DOCKER_HUB_ACCESS_TOKEN`: the access token
+- **Variables** tab → `DOCKER_HUB_USERNAME`: your Docker Hub username
+- **Variables** tab → `DOCKER_HUB_REPOSITORY`: the repository name
+
+> 📸 _Screenshot to add: `images/SECRETS.png` (Actions secrets and variables page)_
+
+### 4. Create the `prod` environment
+
+**Settings → Environments → New environment → `prod`**. Under *Deployment branches and tags*, choose **Selected branches** and add `prod`. Optionally add yourself as a **Required reviewer** so every deploy waits for your approval.
+
+> 📸 _Screenshot to add: `images/ENVIRONMENT.png` (prod environment rules)_
+
+### 5. (Recommended) Protect the `prod` branch
+
+**Settings → Rules → Rulesets → New branch ruleset**, target `prod`, enable **Require a pull request before merging** and **Require status checks to pass** (select the `Secret scan`, `Dependency scan`, `Dockerfile lint` and `Build, test, scan images` checks after their first run).
+
+### 6. Configure and start the VMs
+
+Copy `env.sample` to `.env` and fill it in:
 
 ```bash
 cd virtual_machines
 cp env.sample .env
 ```
 
-The information you will need to fill in:
-- **PROJECT_ID** - you can get project id by navigating `settings` and then clicking `general` tab from the dropdown menu
-- **GITLAB_ACCESS_TOKEN** - offical guide explains better: [Create Personal Access Token](https://docs.gitlab.com/ee/tutorials/automate_runner_creation/?tab=Project#create-a-personal-access-token)
-- **NIC** - network interface name with internet access 
-- **CI_CD_SERVER_IP** - any empty address in your subnet
-- **PROD_SERVER_IP** - any empty address in your subnet
-
-
-4. Run `vagrant up` to set up the virtual machines
-
+- **GITHUB_REPOSITORY**: your fork as `owner/appsec-demon`
+- **GITHUB_TOKEN**: a [fine-grained personal access token](https://github.com/settings/personal-access-tokens/new) scoped to *only* your fork, with **Repository permissions → Administration: Read and write**. It is only used to get runner registration tokens; revoke it once both runners show up.
+- **CI_CD_SERVER_IP** / **PROD_SERVER_IP**: two free addresses in your subnet
+- **NIC**: host network interface with internet access
 
 ```bash
 vagrant up
 ```
-<span style="color:red; font-weight: bold">Note:</span> If you already have virtual machines named `ci_cd_server` or `prod_server`, you will need to go `virtual_machines/Vagranfile` and update them.
 
-5. To validate your runners successfully registered, go to `appsec_demon` project in your Gitlab account, click `Settings` from left menu, then click `CI/CD` from dropdown menu. In the page opened, look for `Runners` and click `Expand`. You should see a similar result
+> [!NOTE]
+> If you already have VirtualBox VMs named `ci_cd_server` or `prod_server`, rename them in `virtual_machines/Vagrantfile` first.
 
-![RUNNERS](images/RUNNERS.png)
+### 7. Check the runners
 
+**Settings → Actions → Runners** should list `ci-cd-server` (label `ci-cd`) and `prod-server` (label `prod-deploy`) as **Idle**.
 
-6. Add docker hub details to gitlab variables. Navigate `CI/CD` tab under `Settings` section and expand `Variables`. You will need to add informations below:
-- **DOCKER_HUB_ACCESS_TOKEN** - Go to `https://hub.docker.com/settings/security` and create a new access token and use it as value
-- **DOCKER_HUB_USERNAME** - USe your docker hub account username as value
-- **DOCKER_HUB_REPOSITORY** - Navigate `Repositories` and create a new repository. Use the newly created repository name as value
+> 📸 _Screenshot to add: `images/RUNNERS.png` (both runners Idle)_
 
-![GITLAB_VARS](images/GITLAB_VARS.png)
+### 8. Trigger a deployment
 
-
-7. Switch to `dev` branch, add a space to `update_file` and merge it to `prod` branch to trigger deployment 
+Open a pull request from `dev` to `prod`. The scan jobs run on the PR. Merge it to run the full pipeline including build, deploy and DAST:
 
 ```bash
-cd ..
-git checkout dev
-echo " " >> update_file
-git add update_file
-git commit -m "adding a space to update_file"
-git push origin dev
-git checkout prod
-git merge dev
-git push origin prod
+gh pr create --base prod --head dev --title "Deploy" --body "Trigger pipeline"
+gh pr merge --merge
 ```
 
-8. Navigate `Pipeline` under `Build` section from left menu in repository to check if deployment is started. You should see similar result
+Or run it by hand: **Actions → pipeline → Run workflow → Branch: prod**.
 
-![PIPELINE](images/PIPELINE.png)
+### 9. Watch the pipeline
 
+**Actions → pipeline** shows each job. If you set a required reviewer on `prod`, approve the deployment when prompted.
 
-9. Navigate using prod server's IP in browser to see if application is deployed and accessible (check .env file if you forgot the IP)
+> 📸 _Screenshot to add: `images/PIPELINE.png` (a successful prod run, all jobs)_
+
+Code findings appear under **Security → Code scanning**. The ZAP report and SBOMs are under **Artifacts** at the bottom of the run summary.
+
+> 📸 _Screenshot to add: `images/CODE_SCANNING.png` (Semgrep/Bandit alerts)_
+
+### 10. Open the application
+
+Browse to the prod server's IP (see `virtual_machines/.env`):
 
 ![APPLICATION](images/APPLICATION.png)
+
+## Updating pinned versions
+
+Dependabot opens weekly PRs for Python packages, Dockerfile base images and GitHub Actions. The scanner images in `.github/workflows/pipeline.yml` (`env:` block) and the runner version in the `Vagrantfile` are pinned by hand; update the tag **and** digest/checksum together.
+
+To change Python dependencies, edit `myprj/requirements.in` and regenerate the lockfile:
+
+```bash
+cd myprj
+uv pip compile requirements.in --python-version 3.13 --generate-hashes --upgrade -o requirements.txt
+```
