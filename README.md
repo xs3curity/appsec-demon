@@ -30,7 +30,7 @@ flowchart TD
         sast["SAST<br/>semgrep + bandit"]:::report
         sca["SCA<br/>pip-audit on hashed lockfile"]:::block
         lint["Dockerfile lint<br/>hadolint"]:::block
-        build["Build images, unit tests,<br/>trivy image scan, CycloneDX SBOM"]:::block
+        build["Build images, unit tests, CycloneDX SBOM,<br/>trivy + VEX → KEV/EPSS gate"]:::block
         secrets & sast & sca & lint --> build
     end
     build -- "prod only" --> push["Push app-SHA / nginx-SHA to Docker Hub"]
@@ -49,7 +49,9 @@ Red jobs **fail the pipeline**. Blue jobs are **report-only**, because the app i
 | SAST | Semgrep (`p/python`, `p/flask`), Bandit → Security tab | No (report) |
 | SCA / dependency check | pip-audit against `requirements.txt` (hash-pinned) | Yes |
 | Dockerfile lint | hadolint (warning and above) | Yes |
-| Container scanning | Trivy, fixable HIGH/CRITICAL | Yes |
+| Container scanning | Trivy, all severities, with VEX applied | via the gate below |
+| Vulnerability prioritisation | `scripts/vuln_gate.py`: CISA KEV + FIRST EPSS risk policy ([details](#vulnerability-triage-and-vex)) | Yes, risk-based |
+| VEX | VEX Hub + `security/vex/appsec-demon.openvex.json` | n/a (suppresses with justification) |
 | SBOM | Trivy CycloneDX, uploaded as `sbom` artifact | n/a |
 | DAST | OWASP ZAP full scan, uploaded as `dast-report` artifact | No (report) |
 | Version pinning | Base images and tool images by digest, Actions by commit SHA, Python deps by hash; Dependabot keeps pip, Dockerfiles and Actions current | n/a |
@@ -158,6 +160,44 @@ Code findings appear under **Security → Code scanning**. The ZAP report and SB
 Browse to the prod server's IP (see `virtual_machines/.env`):
 
 ![APPLICATION](images/APPLICATION.png)
+
+## Vulnerability triage and VEX
+
+Severity alone is a poor signal: a typical base image has hundreds of "HIGH" CVEs, almost none of which are exploited. The image gate (`scripts/vuln_gate.py`) enriches every Trivy finding with the [CISA KEV](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) catalog and [FIRST EPSS](https://www.first.org/epss/) scores, then applies this policy (first match wins):
+
+| # | Condition | Action |
+|---|---|---|
+| 1 | In CISA KEV, any severity, fixed or not | **Block** |
+| 2 | KEV or EPSS unreachable, fixable HIGH/CRITICAL | **Block** (fail safe to severity-only) |
+| 3 | Fixable CRITICAL | **Block** |
+| 4 | Fixable HIGH, EPSS ≥ `EPSS_THRESHOLD` (default 10%) | **Block** |
+| 5 | Fixable HIGH, no EPSS score yet | **Block** |
+| 6 | Fixable HIGH, EPSS below threshold | Warn |
+| 7 | HIGH/CRITICAL, no fix available | Warn |
+| 8 | Anything else | Info |
+
+The result is written to the job summary, with blocking findings as error annotations, and to the `vuln-reports` artifact (raw Trivy JSON plus `vuln-gate.json`). Against the original, unhardened app image, severity-only gating blocked **717** findings; this policy blocks **58** (13 distinct CVEs). It also catches a LOW-severity `openssh-client` CVE that is in KEV, which severity-only gating let through.
+
+Run the tests with `python3 -m unittest discover -s scripts -v`.
+
+### Recording a "not affected" decision
+
+When a finding is reviewed and does not apply, record it as an [OpenVEX](https://openvex.dev) statement in `security/vex/appsec-demon.openvex.json` instead of ignoring it. Trivy applies it (along with upstream statements from [VEX Hub](https://github.com/aquasecurity/vexhub)), and the job summary still lists it under *Suppressed by VEX*. For example:
+
+```json
+{
+  "vulnerability": { "name": "CVE-2024-34069" },
+  "products": [{ "@id": "pkg:pypi/werkzeug@2.3.7" }],
+  "status": "not_affected",
+  "justification": "vulnerable_code_not_in_execute_path",
+  "impact_statement": "The Werkzeug debugger is never enabled; the app runs under gunicorn.",
+  "timestamp": "2026-11-26T00:00:00Z"
+}
+```
+
+- Use the package URL (`purl`) **with the exact version**, so the statement stops applying as soon as the package changes.
+- `justification` must be one of the [OpenVEX values](https://github.com/openvex/spec/blob/main/OPENVEX-SPEC.md#status-justifications), and `impact_statement` must explain why, in terms a reviewer can check.
+- Bump the document's `version` and `timestamp`, and land it through a PR so the decision is reviewed and stays in history.
 
 ## Updating pinned versions
 

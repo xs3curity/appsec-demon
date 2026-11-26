@@ -25,6 +25,8 @@ env:
   ZAP_IMAGE: zaproxy/zap-stable:2.17.0@sha256:9624669db72f54d86c4b46a7064518bd9bf79d8c61a4c31befa9923489f328af
   BANDIT_VERSION: "1.9.4"
   PIP_AUDIT_VERSION: "2.10.1"
+  # Fixable HIGH findings block at or above this EPSS probability (see scripts/vuln_gate.py for the full policy).
+  EPSS_THRESHOLD: "0.10"
 
 jobs:
   secrets:
@@ -84,13 +86,17 @@ jobs:
         run: pipx run "pip-audit==$PIP_AUDIT_VERSION" -r myprj/requirements.txt --require-hashes --disable-pip --strict
 
   lint:
-    name: Dockerfile lint (hadolint)
+    name: Lint and policy tests
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Vulnerability gate unit tests
+        run: python3 -m unittest discover -s scripts -v
+      - name: Validate OpenVEX document
+        run: python3 -m json.tool security/vex/appsec-demon.openvex.json > /dev/null
       - name: Lint Dockerfiles
         run: |
           for f in myprj/Dockerfile nginx/Dockerfile; do
@@ -114,12 +120,26 @@ jobs:
           docker build -t appsec_demon_nginx:ci nginx
       - name: Unit tests
         run: docker run --rm appsec_demon_app:ci python tests.py
-      - name: Image scan (trivy, fails on fixable HIGH/CRITICAL)
+      - name: Image scan (trivy, all severities, VEX applied)
+        # VEX Hub (--vex repo) plus our own reviewed statements; suppressed findings stay visible in the report.
         run: |
-          for img in appsec_demon_app:ci appsec_demon_nginx:ci; do
+          mkdir -p vuln-reports
+          for c in app nginx; do
             docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v trivy-cache:/root/.cache \
-              "$TRIVY_IMAGE" image --no-progress --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "$img"
+              -v "$PWD/security/vex:/vex:ro" -v "$PWD/vuln-reports:/out" \
+              "$TRIVY_IMAGE" image --no-progress --scanners vuln \
+              --vex repo --vex /vex/appsec-demon.openvex.json --show-suppressed \
+              --format json --output "/out/trivy-${c}.json" "appsec_demon_${c}:ci"
           done
+      - name: Vulnerability gate (CISA KEV + EPSS)
+        run: >-
+          python3 scripts/vuln_gate.py vuln-reports/trivy-app.json vuln-reports/trivy-nginx.json
+          --epss-threshold "$EPSS_THRESHOLD" --report vuln-reports/vuln-gate.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: vuln-reports
+          path: vuln-reports/
       - name: Generate SBOMs (CycloneDX)
         run: |
           mkdir -p sbom
