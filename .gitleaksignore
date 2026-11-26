@@ -1,0 +1,2 @@
+# False positive: curl -u "${SONAR_TOKEN}:" is a variable reference, not a credential (file deleted in aeb2c47).
+083160830c6dbf26c2e5840de1c3ab4376d3c1c0:sonar-project.properties:curl-auth-user:29

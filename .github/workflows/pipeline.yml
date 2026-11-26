@@ -1,0 +1,194 @@
+name: pipeline
+
+# PRs and pushes to dev run every check on GitHub-hosted runners.
+# Only a push to prod builds, publishes, deploys (self-hosted prod runner) and runs DAST (self-hosted ci-cd runner).
+on:
+  pull_request:
+    branches: [dev, prod]
+  push:
+    branches: [dev, prod]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/prod' }}
+
+env:
+  # Tool images are pinned by tag and digest; Dependabot does not track these, bump them by hand.
+  GITLEAKS_IMAGE: zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+  SEMGREP_IMAGE: semgrep/semgrep:1.187.0@sha256:0c8dfa7aa1ca8c50233ec9110e8cd88d139dedd603d56507493f74c6f4b3e062
+  HADOLINT_IMAGE: hadolint/hadolint:v2.15.1@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d
+  TRIVY_IMAGE: aquasec/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb
+  ZAP_IMAGE: zaproxy/zap-stable:2.17.0@sha256:9624669db72f54d86c4b46a7064518bd9bf79d8c61a4c31befa9923489f328af
+  BANDIT_VERSION: "1.9.4"
+  PIP_AUDIT_VERSION: "2.10.1"
+
+jobs:
+  secrets:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Scan full git history
+        # Run as the checkout's owner so git does not reject the mount as "dubious ownership".
+        run: docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/repo" "$GITLEAKS_IMAGE" git /repo --redact --verbose --exit-code 1
+
+  sast:
+    # Report-only: the app is intentionally vulnerable, so code findings go to the Security tab instead of failing the run.
+    name: SAST (semgrep, bandit)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Semgrep
+        run: >-
+          docker run --rm -v "$PWD:/src" -w /src "$SEMGREP_IMAGE"
+          semgrep scan --config p/python --config p/flask --metrics off --sarif --output semgrep.sarif myprj
+      - name: Bandit
+        run: pipx run "bandit[sarif]==$BANDIT_VERSION" -r myprj -f sarif -o bandit.sarif --exit-zero
+      - name: Upload Semgrep results
+        # Fork PRs get a read-only token, so uploads only run for same-repo events.
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: github/codeql-action/upload-sarif@915412ff23e8b7659517e607487dbeae018f2934 # v4.39.5
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+      - name: Upload Bandit results
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: github/codeql-action/upload-sarif@915412ff23e8b7659517e607487dbeae018f2934 # v4.39.5
+        with:
+          sarif_file: bandit.sarif
+          category: bandit
+
+  sca:
+    name: Dependency scan (pip-audit)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Audit locked requirements
+        run: pipx run "pip-audit==$PIP_AUDIT_VERSION" -r myprj/requirements.txt --require-hashes --disable-pip --strict
+
+  lint:
+    name: Dockerfile lint (hadolint)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Lint Dockerfiles
+        run: |
+          for f in myprj/Dockerfile nginx/Dockerfile; do
+            echo "::group::$f"
+            docker run --rm -i "$HADOLINT_IMAGE" hadolint --failure-threshold warning - < "$f"
+            echo "::endgroup::"
+          done
+
+  build:
+    name: Build, test, scan images
+    needs: [secrets, sast, sca, lint]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build images
+        run: |
+          docker build -t appsec_demon_app:ci myprj
+          docker build -t appsec_demon_nginx:ci nginx
+      - name: Unit tests
+        run: docker run --rm appsec_demon_app:ci python tests.py
+      - name: Image scan (trivy, fails on fixable HIGH/CRITICAL)
+        run: |
+          for img in appsec_demon_app:ci appsec_demon_nginx:ci; do
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v trivy-cache:/root/.cache \
+              "$TRIVY_IMAGE" image --no-progress --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "$img"
+          done
+      - name: Generate SBOMs (CycloneDX)
+        run: |
+          mkdir -p sbom
+          for c in app nginx; do
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v trivy-cache:/root/.cache -v "$PWD/sbom:/out" \
+              "$TRIVY_IMAGE" image --no-progress --format cyclonedx --output "/out/${c}.cdx.json" "appsec_demon_${c}:ci"
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sbom
+          path: sbom/
+      - name: Push images to Docker Hub
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/prod'
+        env:
+          DOCKER_HUB_USERNAME: ${{ vars.DOCKER_HUB_USERNAME }}
+          DOCKER_HUB_REPOSITORY: ${{ vars.DOCKER_HUB_REPOSITORY }}
+          DOCKER_HUB_ACCESS_TOKEN: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
+        run: |
+          echo "$DOCKER_HUB_ACCESS_TOKEN" | docker login -u "$DOCKER_HUB_USERNAME" --password-stdin
+          for c in app nginx; do
+            ref="$DOCKER_HUB_USERNAME/$DOCKER_HUB_REPOSITORY:${c}-$GITHUB_SHA"
+            docker tag "appsec_demon_${c}:ci" "$ref"
+            docker push "$ref"
+          done
+          docker logout
+
+  deploy:
+    name: Deploy to prod
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/prod'
+    runs-on: [self-hosted, prod-deploy]
+    environment: prod
+    timeout-minutes: 15
+    env:
+      DOCKER_HUB_USERNAME: ${{ vars.DOCKER_HUB_USERNAME }}
+      DOCKER_HUB_REPOSITORY: ${{ vars.DOCKER_HUB_REPOSITORY }}
+      IMAGE_TAG: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Pull and start the SHA-tagged images
+        env:
+          DOCKER_HUB_ACCESS_TOKEN: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
+        run: |
+          # Throwaway Docker config so registry credentials are not left on the prod host.
+          export DOCKER_CONFIG="$(mktemp -d)"
+          trap 'rm -rf "$DOCKER_CONFIG"' EXIT
+          echo "$DOCKER_HUB_ACCESS_TOKEN" | docker login -u "$DOCKER_HUB_USERNAME" --password-stdin
+          docker compose pull
+          docker compose up -d --remove-orphans
+          docker compose ps
+
+  dast:
+    # Report-only for the same reason as SAST; the HTML/JSON reports are uploaded as an artifact.
+    name: DAST (ZAP full scan)
+    needs: deploy
+    runs-on: [self-hosted, ci-cd]
+    timeout-minutes: 60
+    env:
+      DAST_TARGET: http://appsec.demon.lab
+    steps:
+      - name: ZAP full scan
+        run: |
+          rm -rf reports && mkdir reports && chmod 777 reports
+          docker run --rm --network host -v "$PWD/reports:/zap/wrk" "$ZAP_IMAGE" \
+            zap-full-scan.py -t "$DAST_TARGET" -r report.html -J report.json -I
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: dast-report
+          path: reports/
