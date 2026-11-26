@@ -1,18 +1,24 @@
-version: '3.8'
 services:
   app:
     container_name: app
     restart: always
-    image: ${DOCKER_HUB_USERNAME}/${DOCKER_HUB_REPOSITORY}:app
-    ports:
-      - "8000:8000"
+    image: ${DOCKER_HUB_USERNAME:?}/${DOCKER_HUB_REPOSITORY:?}:app-${IMAGE_TAG:?}
+    # Reachable only through nginx on the compose network, not published on the host.
+    expose:
+      - "8000"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
   nginx:
     container_name: proxy
     restart: always
-    image: ${DOCKER_HUB_USERNAME}/${DOCKER_HUB_REPOSITORY}:nginx
+    image: ${DOCKER_HUB_USERNAME:?}/${DOCKER_HUB_REPOSITORY:?}:nginx-${IMAGE_TAG:?}
     ports:
       - "80:80"
     volumes:
       - /var/log/nginx/:/var/log/nginx/
+    security_opt:
+      - no-new-privileges:true
     depends_on:
       - app
