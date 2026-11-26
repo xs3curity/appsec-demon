@@ -1,28 +1,71 @@
 # -*- mode: ruby -*-
 # vi: set ft=ruby :
 
+# GitHub Actions self-hosted runner, pinned by version and SHA-256 of the linux-x64 tarball
+# (from https://github.com/actions/runner/releases/tag/v2.338.2).
+RUNNER_VERSION = "2.338.2"
+RUNNER_SHA256  = "baebf204307bac6193480852732f0aba2ae97b6c5597c244f4d5558390147c40"
+
+RUNNER_ENV = {
+  "GITHUB_REPOSITORY" => ENV["GITHUB_REPOSITORY"],
+  "GITHUB_TOKEN"      => ENV["GITHUB_TOKEN"],
+}
+
+# Installs the runner as an unprivileged "runner" user and registers it with one label.
+# Note: membership of the docker group is root-equivalent on that VM; that is why the
+# pipeline only sends prod-branch deploy and DAST jobs to these runners.
+def register_runner(name, label)
+  <<-SHELL
+    set -euo pipefail
+    id runner >/dev/null 2>&1 || useradd --create-home --shell /bin/bash runner
+    usermod -aG docker runner
+    install -d -o runner -g runner /home/runner/actions-runner
+    cd /home/runner/actions-runner
+    if [ -f .runner ]; then
+      echo "Runner already configured, skipping."
+      exit 0
+    fi
+    curl -fsSLo /tmp/runner.tar.gz \
+      "https://github.com/actions/runner/releases/download/v#{RUNNER_VERSION}/actions-runner-linux-x64-#{RUNNER_VERSION}.tar.gz"
+    echo "#{RUNNER_SHA256}  /tmp/runner.tar.gz" | sha256sum -c -
+    sudo -u runner tar xzf /tmp/runner.tar.gz -C /home/runner/actions-runner
+    rm /tmp/runner.tar.gz
+    ./bin/installdependencies.sh
+    REG_TOKEN=$(curl -fsSL -X POST \
+      -H "Authorization: Bearer $GITHUB_TOKEN" \
+      -H "Accept: application/vnd.github+json" \
+      -H "X-GitHub-Api-Version: 2022-11-28" \
+      "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runners/registration-token" | jq -r .token)
+    sudo -u runner ./config.sh --unattended \
+      --url "https://github.com/$GITHUB_REPOSITORY" \
+      --token "$REG_TOKEN" \
+      --name "#{name}" \
+      --labels "#{label}"
+    ./svc.sh install runner
+    ./svc.sh start
+  SHELL
+end
+
 Vagrant.configure("2") do |config|
   config.vm.box = "ubuntu/jammy64"
   config.env.enable
 
   config.vm.provision "shell", inline: <<-SHELL
-    # Install Docker engine
+    set -euo pipefail
+    # Install Docker Engine and the compose plugin from Docker's apt repository
     apt-get update && apt-get upgrade -y
-    apt-get install ca-certificates curl gnupg
+    apt-get install -y ca-certificates curl gnupg jq git
     install -m 0755 -d /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg
     chmod a+r /etc/apt/keyrings/docker.gpg
     echo \
       "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
       $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
       tee /etc/apt/sources.list.d/docker.list > /dev/null
     apt-get update
-    apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin docker-compose
-    # Install Gitlab runners
-    curl -L "https://packages.gitlab.com/install/repositories/runner/gitlab-runner/script.deb.sh" | bash
-    apt-get install -y gitlab-runner jq git
-    usermod -aG docker gitlab-runner
+    apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
   SHELL
+
   config.vm.define "ci_cd" do |ci_cd|
     ci_cd.vm.provider "virtualbox" do |vb|
       vb.name = "ci_cd_server"
@@ -33,14 +76,10 @@ Vagrant.configure("2") do |config|
 
     ci_cd.vm.network "public_network", ip: ENV['CI_CD_SERVER_IP'], bridge: ENV['NIC']
 
-    ci_cd.vm.provision "shell" do |shell|
-      shell.env = {"PROJECT_ID" => ENV['PROJECT_ID'], "GITLAB_ACCESS_TOKEN" => ENV['GITLAB_ACCESS_TOKEN'], "CI_CD_SERVER_IP" => ENV['CI_CD_SERVER_IP'], "PROD_SERVER_IP" => ENV['PROD_SERVER_IP']}
-      shell.inline = <<-SHELL
-      TOKEN=$(curl --silent --request POST --url "https://gitlab.com/api/v4/user/runners" --data "runner_type=project_type" --data "project_id=$PROJECT_ID" --data "description=ci_cd_server" --data "tag_list=CI-CD" --header "PRIVATE-TOKEN: $GITLAB_ACCESS_TOKEN" | jq .token | sed 's/"//g')
-      gitlab-runner register --non-interactive --name="CI_CD_Server" --url="https://gitlab.com"   --token="$TOKEN" --executor="shell"
-      echo -e "\n\n$PROD_SERVER_IP\t\tappsec.demon.lab" >> /etc/hosts
-      SHELL
-    end
+    ci_cd.vm.provision "shell", env: RUNNER_ENV, inline: register_runner("ci-cd-server", "ci-cd")
+    ci_cd.vm.provision "shell", env: { "PROD_SERVER_IP" => ENV['PROD_SERVER_IP'] }, inline: <<-SHELL
+      grep -q 'appsec.demon.lab' /etc/hosts || echo -e "\n$PROD_SERVER_IP\t\tappsec.demon.lab" >> /etc/hosts
+    SHELL
   end
 
   config.vm.define "prod" do |prod|
@@ -53,12 +92,6 @@ Vagrant.configure("2") do |config|
 
     prod.vm.network "public_network", ip: ENV['PROD_SERVER_IP'], bridge: ENV['NIC']
 
-    prod.vm.provision "shell" do |shell|
-      shell.env = {"PROJECT_ID" => ENV['PROJECT_ID'], "GITLAB_ACCESS_TOKEN" => ENV['GITLAB_ACCESS_TOKEN'], "CI_CD_SERVER_IP" => ENV['CI_CD_SERVER_IP'], "PROD_SERVER_IP" => ENV['PROD_SERVER_IP']}
-      shell.inline = <<-SHELL
-      TOKEN=$(curl --silent --request POST --url "https://gitlab.com/api/v4/user/runners" --data "runner_type=project_type" --data "project_id=$PROJECT_ID" --data "description=prod_server" --data "tag_list=prod-deploy" --header "PRIVATE-TOKEN: $GITLAB_ACCESS_TOKEN" | jq .token | sed 's/"//g')
-      gitlab-runner register --non-interactive --name="Prod_Server" --url="https://gitlab.com"   --token="$TOKEN" --executor="shell"
-      SHELL
-    end
+    prod.vm.provision "shell", env: RUNNER_ENV, inline: register_runner("prod-server", "prod-deploy")
   end
 end
