@@ -126,13 +126,21 @@ jobs:
         run: docker run --rm appsec_demon_app:ci python tests.py
       - name: Image scan (trivy, all severities, VEX applied)
         # VEX Hub (--vex repo) plus our own reviewed statements; suppressed findings stay visible in the report.
+        # VEX Hub is fetched via the GitHub API: authenticate (read-only job token) because the anonymous
+        # limit is shared per runner IP, and download it once for both scans.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           mkdir -p vuln-reports
+          trivy() {
+            docker run --rm -e GITHUB_TOKEN -v /var/run/docker.sock:/var/run/docker.sock \
+              -v trivy-cache:/root/.cache -v trivy-vex:/root/.trivy \
+              -v "$PWD/security/vex:/vex:ro" -v "$PWD/vuln-reports:/out" "$TRIVY_IMAGE" "$@"
+          }
+          trivy vex repo download
           for c in app nginx; do
-            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v trivy-cache:/root/.cache \
-              -v "$PWD/security/vex:/vex:ro" -v "$PWD/vuln-reports:/out" \
-              "$TRIVY_IMAGE" image --no-progress --scanners vuln \
-              --vex repo --vex /vex/appsec-demon.openvex.json --show-suppressed \
+            trivy image --no-progress --scanners vuln \
+              --vex repo --skip-vex-repo-update --vex /vex/appsec-demon.openvex.json --show-suppressed \
               --format json --output "/out/trivy-${c}.json" "appsec_demon_${c}:ci"
           done
       - name: Vulnerability gate (CISA KEV + EPSS + risk acceptances)
