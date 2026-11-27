@@ -184,3 +184,7 @@ pyrightconfig.json
 *.box
 
 # End of https://www.toptal.com/developers/gitignore/api/python,vagrant
+
+# Local pipeline outputs
+vuln-reports/
+sbom/

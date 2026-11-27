@@ -1,0 +1,14 @@
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /myprj
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directories: [/myprj, /nginx]
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

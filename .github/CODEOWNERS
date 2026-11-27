@@ -1,0 +1,6 @@
+# Security decisions and the code that enforces them need code-owner review
+# (enable "Require review from Code Owners" in the branch ruleset).
+/security/            @xs3curity
+/scripts/             @xs3curity
+/.github/             @xs3curity
+/.gitleaksignore      @xs3curity
