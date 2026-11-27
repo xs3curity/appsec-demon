@@ -1,2 +1,11 @@
-# False positive: curl -u "${SONAR_TOKEN}:" is a variable reference, not a credential (file deleted in aeb2c47).
+# Reviewed historical findings. Each fingerprint is pinned to one commit, so new leaks are still caught.
+
+# False positive: a Sonar token passed by variable reference, not a credential (file deleted in aeb2c47).
 083160830c6dbf26c2e5840de1c3ab4376d3c1c0:sonar-project.properties:curl-auth-user:29
+
+# False positive: an earlier version of this file quoted the line above.
+775a12a152aaa2e77a06e4a443e3dd0dfdc043bb:.gitleaksignore:curl-auth-user:1
+
+# Vagrant-generated SSH key for a local VirtualBox VM named "default", committed by mistake and deleted in 34de042.
+# That VM is no longer defined in the Vagrantfile; the key granted access only to it.
+8f1679a6254a89289d8131be393ec7eaf2f80b2b:.vagrant/machines/default/virtualbox/private_key:private-key:1
