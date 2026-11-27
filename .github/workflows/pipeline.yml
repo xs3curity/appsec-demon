@@ -95,8 +95,12 @@ jobs:
           persist-credentials: false
       - name: Vulnerability gate unit tests
         run: python3 -m unittest discover -s scripts -v
-      - name: Validate OpenVEX document
-        run: python3 -m json.tool security/vex/appsec-demon.openvex.json > /dev/null
+      - name: Validate OpenVEX and risk-acceptance files
+        run: |
+          python3 -m json.tool ../security/vex/appsec-demon.openvex.json > /dev/null
+          python3 -c 'import sys, vuln_gate as g; print(len(g.load_acceptances(sys.argv[1], g.utc_today())), "risk acceptances valid")' \
+            ../security/risk-acceptances.json
+        working-directory: scripts
       - name: Lint Dockerfiles
         run: |
           for f in myprj/Dockerfile nginx/Dockerfile; do
@@ -131,10 +135,11 @@ jobs:
               --vex repo --vex /vex/appsec-demon.openvex.json --show-suppressed \
               --format json --output "/out/trivy-${c}.json" "appsec_demon_${c}:ci"
           done
-      - name: Vulnerability gate (CISA KEV + EPSS)
+      - name: Vulnerability gate (CISA KEV + EPSS + risk acceptances)
         run: >-
           python3 scripts/vuln_gate.py vuln-reports/trivy-app.json vuln-reports/trivy-nginx.json
-          --epss-threshold "$EPSS_THRESHOLD" --report vuln-reports/vuln-gate.json
+          --epss-threshold "$EPSS_THRESHOLD" --acceptances security/risk-acceptances.json
+          --report vuln-reports/vuln-gate.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:

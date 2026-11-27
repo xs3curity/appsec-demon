@@ -51,6 +51,7 @@ Red jobs **fail the pipeline**. Blue jobs are **report-only**, because the app i
 | Dockerfile lint | hadolint (warning and above) | Yes |
 | Container scanning | Trivy, all severities, with VEX applied | via the gate below |
 | Vulnerability prioritisation | `scripts/vuln_gate.py`: CISA KEV + FIRST EPSS risk policy ([details](#vulnerability-triage-and-vex)) | Yes, risk-based |
+| Risk acceptance | `security/risk-acceptances.json`, expiring, code-owner reviewed; required for HIGH/CRITICAL with no fix | Yes, until accepted |
 | VEX | VEX Hub + `security/vex/appsec-demon.openvex.json` | n/a (suppresses with justification) |
 | SBOM | Trivy CycloneDX, uploaded as `sbom` artifact | n/a |
 | DAST | OWASP ZAP full scan, uploaded as `dast-report` artifact | No (report) |
@@ -105,7 +106,10 @@ Create a Docker Hub repository and an access token (`https://app.docker.com/sett
 
 ### 5. (Recommended) Protect the `prod` branch
 
-**Settings → Rules → Rulesets → New branch ruleset**, target `prod`, enable **Require a pull request before merging** and **Require status checks to pass** (select the `Secret scan`, `Dependency scan`, `Dockerfile lint` and `Build, test, scan images` checks after their first run).
+**Settings → Rules → Rulesets → New branch ruleset**, target `dev` and `prod`, enable:
+
+- **Require a pull request before merging**, with **Require review from Code Owners** (so [risk acceptances](#accepting-a-risk-that-has-no-fix) and changes to the gate get reviewed)
+- **Require status checks to pass**: select `Secret scan (gitleaks)`, `SAST (semgrep, bandit)`, `Dependency scan (pip-audit)`, `Lint and policy tests` and `Build, test, scan images` after their first run
 
 ### 6. Configure and start the VMs
 
@@ -173,8 +177,9 @@ Severity alone is a poor signal: a typical base image has hundreds of "HIGH" CVE
 | 4 | Fixable HIGH, EPSS ≥ `EPSS_THRESHOLD` (default 10%) | **Block** |
 | 5 | Fixable HIGH, no EPSS score yet | **Block** |
 | 6 | Fixable HIGH, EPSS below threshold | Warn |
-| 7 | HIGH/CRITICAL, no fix available | Warn |
-| 8 | Anything else | Info |
+| 7 | HIGH/CRITICAL, no fix available, covered by an unexpired [risk acceptance](#accepting-a-risk-that-has-no-fix) | Warn |
+| 8 | HIGH/CRITICAL, no fix available, no acceptance or acceptance expired | **Block** |
+| 9 | Anything else | Info |
 
 The result is written to the job summary, with blocking findings as error annotations, and to the `vuln-reports` artifact (raw Trivy JSON plus `vuln-gate.json`). Against the original, unhardened app image, severity-only gating blocked **717** findings; this policy blocks **58** (13 distinct CVEs). It also catches a LOW-severity `openssh-client` CVE that is in KEV, which severity-only gating let through.
 
@@ -198,6 +203,26 @@ When a finding is reviewed and does not apply, record it as an [OpenVEX](https:/
 - Use the package URL (`purl`) **with the exact version**, so the statement stops applying as soon as the package changes.
 - `justification` must be one of the [OpenVEX values](https://github.com/openvex/spec/blob/main/OPENVEX-SPEC.md#status-justifications), and `impact_statement` must explain why, in terms a reviewer can check.
 - Bump the document's `version` and `timestamp`, and land it through a PR so the decision is reviewed and stays in history.
+
+### Accepting a risk that has no fix
+
+A HIGH or CRITICAL finding with no fixed version blocks the pipeline until someone reviews it. If the package is *not affected*, record that in VEX (above). If it is affected but the risk is acceptable until a fix ships, add an entry to `security/risk-acceptances.json`:
+
+```json
+{
+  "id": "CVE-2026-119373",
+  "packages": ["libsqlite3-0"],
+  "reason": "SQLite FTS5 heap overflow. The app uses no database and sqlite3 is not loaded under gunicorn (checked). No Debian fix yet.",
+  "expires": "2027-02-25"
+}
+```
+
+- `expires` can be **at most 90 days** out; after that the finding blocks again until it is re-reviewed. The gate warns 14 days before expiry and flags acceptances that no longer match anything.
+- An acceptance never overrides a KEV entry or a finding that has a fix: once Debian ships a fix, the normal rules apply and you just rebuild.
+- `.github/CODEOWNERS` covers `security/`, `scripts/` and `.github/`, so with **Require review from Code Owners** on, every acceptance needs an approving review. That PR review is the approval record.
+
+> [!NOTE]
+> GitHub does not let you approve your own PR. On a single-maintainer fork, either add a second collaborator as a code owner or add yourself to the ruleset's bypass list and treat the merge as the approval.
 
 ## Updating pinned versions
 

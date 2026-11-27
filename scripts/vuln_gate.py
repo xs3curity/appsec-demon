@@ -12,11 +12,16 @@ Policy (first matching rule wins):
   4. Fixable HIGH with EPSS >= threshold           -> BLOCK
   5. Fixable HIGH with no EPSS score               -> BLOCK (cannot rule it out)
   6. Fixable HIGH with EPSS below threshold        -> WARN
-  7. HIGH/CRITICAL with no fix available           -> WARN
-  8. Everything else                               -> INFO
+  7. HIGH/CRITICAL with no fix, valid acceptance   -> WARN
+  8. HIGH/CRITICAL with no fix, none or expired    -> BLOCK (needs a reviewed risk acceptance)
+  9. Everything else                               -> INFO
 
 Findings marked not_affected/fixed by VEX are removed by Trivy before they get
 here (run Trivy with --vex ... --show-suppressed) and are listed in the summary.
+
+Risk acceptances (--acceptances, see security/risk-acceptances.json) cover only
+rules 7/8: a CVE that has no fix yet and was reviewed and accepted until an expiry
+date at most MAX_ACCEPTANCE_DAYS ahead. They never override KEV or fixable findings.
 
 Only the standard library is used so the script runs on any CI image.
 Exit code: 0 = pass, 1 = at least one BLOCK, 2 = usage/input error.
@@ -33,6 +38,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import asdict, dataclass
+from datetime import date, datetime, timezone
 from typing import Iterable
 
 KEV_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
@@ -44,6 +50,8 @@ HTTP_TIMEOUT = 30
 BLOCK, WARN, INFO = "block", "warn", "info"
 SEVERITY_RANK = {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1, "UNKNOWN": 0}
 MAX_TABLE_ROWS = 50
+MAX_ACCEPTANCE_DAYS = 90
+EXPIRY_WARNING_DAYS = 14
 
 
 @dataclass(frozen=True)
@@ -76,12 +84,24 @@ class Suppressed:
 
 
 @dataclass(frozen=True)
+class Acceptance:
+    vuln_id: str
+    packages: frozenset[str]
+    reason: str
+    expires: date
+
+    def covers(self, f: Finding) -> bool:
+        return f.vuln_id == self.vuln_id and f.pkg in self.packages
+
+
+@dataclass(frozen=True)
 class Decision:
     finding: Finding
     action: str
     reason: str
     epss: float | None
     kev: bool
+    accepted_until: str = ""
 
 
 @dataclass
@@ -101,13 +121,24 @@ class Enrichment:
 # --------------------------------------------------------------------------- policy
 
 
-def decide(f: Finding, enr: Enrichment, epss_threshold: float) -> Decision:
+def utc_today() -> date:
+    return datetime.now(timezone.utc).date()
+
+
+def decide(
+    f: Finding,
+    enr: Enrichment,
+    epss_threshold: float,
+    acceptance: Acceptance | None = None,
+    today: date | None = None,
+) -> Decision:
     """Apply the policy in the module docstring to a single finding."""
     in_kev = f.vuln_id in enr.kev
     score = enr.epss.get(f.vuln_id)
+    today = today or utc_today()
 
-    def d(action: str, reason: str) -> Decision:
-        return Decision(f, action, reason, score, in_kev)
+    def d(action: str, reason: str, accepted_until: str = "") -> Decision:
+        return Decision(f, action, reason, score, in_kev, accepted_until)
 
     if in_kev:
         return d(BLOCK, "in CISA KEV (known exploited)")
@@ -122,8 +153,59 @@ def decide(f: Finding, enr: Enrichment, epss_threshold: float) -> Decision:
             return d(BLOCK, f"fixable HIGH, EPSS {score:.1%} >= {epss_threshold:.0%}")
         return d(WARN, f"fixable HIGH, EPSS {score:.1%} < {epss_threshold:.0%}")
     if f.rank >= SEVERITY_RANK["HIGH"]:
-        return d(WARN, f"{f.severity} with no fix available")
+        if acceptance is None:
+            return d(BLOCK, f"{f.severity} with no fix available and no risk acceptance")
+        if acceptance.expires < today:
+            return d(BLOCK, f"{f.severity} with no fix available; risk acceptance expired {acceptance.expires}")
+        return d(WARN, f"{f.severity} with no fix available; risk accepted until {acceptance.expires}",
+                 acceptance.expires.isoformat())
     return d(INFO, f"{f.severity}")
+
+
+# --------------------------------------------------------------------------- risk acceptances
+
+
+def load_acceptances(path: str, today: date) -> list[Acceptance]:
+    """Load and validate a risk-acceptance file. Raises ValueError on any invalid entry.
+
+    Format: {"acceptances": [{"id": "CVE-...", "packages": ["pkg", ...],
+             "reason": "...", "expires": "YYYY-MM-DD"}, ...]}
+    """
+    with open(path) as fh:
+        data = json.load(fh)
+    entries = data.get("acceptances")
+    if not isinstance(entries, list):
+        raise ValueError("top-level 'acceptances' must be a list")
+    out: list[Acceptance] = []
+    seen: set[tuple[str, str]] = set()
+    for i, e in enumerate(entries):
+        where = f"acceptances[{i}]"
+        if not isinstance(e, dict):
+            raise ValueError(f"{where}: must be an object")
+        vid, pkgs, reason, expires = e.get("id"), e.get("packages"), e.get("reason"), e.get("expires")
+        if not isinstance(vid, str) or not vid.strip():
+            raise ValueError(f"{where}: 'id' is required")
+        where = f"{where} ({vid})"
+        if not isinstance(pkgs, list) or not pkgs or not all(isinstance(p, str) and p for p in pkgs):
+            raise ValueError(f"{where}: 'packages' must be a non-empty list of package names")
+        if not isinstance(reason, str) or len(reason.strip()) < 20:
+            raise ValueError(f"{where}: 'reason' must explain why the risk is acceptable")
+        try:
+            exp = date.fromisoformat(expires)
+        except (TypeError, ValueError):
+            raise ValueError(f"{where}: 'expires' must be a YYYY-MM-DD date") from None
+        if (exp - today).days > MAX_ACCEPTANCE_DAYS:
+            raise ValueError(f"{where}: expires {exp}, more than {MAX_ACCEPTANCE_DAYS} days ahead")
+        for p in pkgs:
+            if (vid, p) in seen:
+                raise ValueError(f"{where}: duplicate acceptance for package {p}")
+            seen.add((vid, p))
+        out.append(Acceptance(vid, frozenset(pkgs), reason.strip(), exp))
+    return out
+
+
+def find_acceptance(f: Finding, acceptances: list[Acceptance]) -> Acceptance | None:
+    return next((a for a in acceptances if a.covers(f)), None)
 
 
 # --------------------------------------------------------------------------- input
@@ -243,9 +325,19 @@ def _sort_key(d: Decision) -> tuple:
     return (not d.kev, -(d.epss or 0.0), -d.finding.rank, d.finding.vuln_id)
 
 
+def acceptance_usage(decisions: list[Decision], acceptances: list[Acceptance]) -> list[tuple[Acceptance, int]]:
+    """Each acceptance with the number of findings it covered in this run."""
+    return [(a, sum(1 for d in decisions if a.covers(d.finding) and d.accepted_until)) for a in acceptances]
+
+
 def render_summary(
-    decisions: list[Decision], suppressed: list[Suppressed], enr: Enrichment, epss_threshold: float
+    decisions: list[Decision],
+    suppressed: list[Suppressed],
+    enr: Enrichment,
+    epss_threshold: float,
+    acceptances: list[Acceptance] | None = None,
 ) -> str:
+    acceptances = acceptances or []
     blocks = sorted((d for d in decisions if d.action == BLOCK), key=_sort_key)
     warns = sorted((d for d in decisions if d.action == WARN), key=_sort_key)
     targets = sorted({d.finding.target for d in decisions} | {s.target for s in suppressed})
@@ -253,8 +345,8 @@ def render_summary(
     header = "| ID | Image | Package | Installed → Fixed | Severity | EPSS | KEV | Reason |\n|---|---|---|---|---|---|---|---|"
     out = [f"## Vulnerability gate: {'❌ blocked' if blocks else '✅ passed'}", ""]
     out.append(
-        f"Policy: block CISA KEV entries, fixable CRITICAL, and fixable HIGH with EPSS ≥ {epss_threshold:.0%}. "
-        "Everything else is reported."
+        f"Policy: block CISA KEV entries, fixable CRITICAL, fixable HIGH with EPSS ≥ {epss_threshold:.0%}, "
+        "and HIGH/CRITICAL with no fix unless a reviewed risk acceptance covers it. Everything else is reported."
     )
     if enr.ok:
         out.append(f"Data: KEV catalog `{enr.kev_version}`, EPSS scores `{enr.epss_date}`.")
@@ -278,6 +370,13 @@ def render_summary(
         if len(warns) > MAX_TABLE_ROWS:
             out.append(f"\n…and {len(warns) - MAX_TABLE_ROWS} more in the `vuln-gate.json` artifact.")
         out += ["", "</details>"]
+    if acceptances:
+        out += ["", f"<details><summary>Risk acceptances ({len(acceptances)})</summary>", ""]
+        out += ["| ID | Packages | Expires | Findings covered | Reason |", "|---|---|---|---|---|"]
+        for a, n in acceptance_usage(decisions, acceptances):
+            used = str(n) if n else "0 (unused: remove it)"
+            out.append(f"| `{a.vuln_id}` | {', '.join(sorted(a.packages))} | {a.expires} | {used} | {a.reason} |")
+        out += ["", "</details>"]
     if suppressed:
         out += ["", f"<details><summary>Suppressed by VEX ({len(suppressed)})</summary>", ""]
         out += ["| ID | Image | Package | Status | Justification | Source |", "|---|---|---|---|---|---|"]
@@ -289,7 +388,13 @@ def render_summary(
     return "\n".join(out) + "\n"
 
 
-def write_report(path: str, decisions: list[Decision], suppressed: list[Suppressed], enr: Enrichment) -> None:
+def write_report(
+    path: str,
+    decisions: list[Decision],
+    suppressed: list[Suppressed],
+    enr: Enrichment,
+    acceptances: list[Acceptance] | None = None,
+) -> None:
     payload = {
         "enrichment": {
             "kev_ok": enr.kev_ok,
@@ -298,10 +403,22 @@ def write_report(path: str, decisions: list[Decision], suppressed: list[Suppress
             "epss_date": enr.epss_date,
         },
         "decisions": [
-            {**asdict(d.finding), "action": d.action, "reason": d.reason, "epss": d.epss, "kev": d.kev}
+            {
+                **asdict(d.finding),
+                "action": d.action,
+                "reason": d.reason,
+                "epss": d.epss,
+                "kev": d.kev,
+                "accepted_until": d.accepted_until or None,
+            }
             for d in sorted(decisions, key=_sort_key)
         ],
         "suppressed": [asdict(s) for s in suppressed],
+        "acceptances": [
+            {"id": a.vuln_id, "packages": sorted(a.packages), "expires": a.expires.isoformat(),
+             "reason": a.reason, "findings_covered": n}
+            for a, n in acceptance_usage(decisions, acceptances or [])
+        ],
     }
     with open(path, "w") as fh:
         json.dump(payload, fh, indent=2)
@@ -319,10 +436,20 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--kev-file", help="use a local KEV catalog JSON instead of downloading")
     p.add_argument("--epss-file", help="use a local {cve: score} JSON instead of the EPSS API")
     p.add_argument("--offline", action="store_true", help="no network; implies severity-only fallback")
+    p.add_argument("--acceptances", help="risk-acceptance JSON for HIGH/CRITICAL findings with no fix")
     args = p.parse_args(argv)
 
     if not 0.0 <= args.epss_threshold <= 1.0:
         p.error("--epss-threshold must be between 0 and 1")
+
+    today = utc_today()
+    acceptances: list[Acceptance] = []
+    if args.acceptances:
+        try:
+            acceptances = load_acceptances(args.acceptances, today)
+        except (OSError, json.JSONDecodeError, ValueError) as err:
+            print(f"error: invalid risk-acceptance file {args.acceptances}: {err}", file=sys.stderr)
+            return 2
 
     findings: list[Finding] = []
     suppressed: list[Suppressed] = []
@@ -337,17 +464,25 @@ def main(argv: list[str] | None = None) -> int:
         suppressed += s
 
     enr = load_enrichment({f.vuln_id for f in findings}, args.kev_file, args.epss_file, args.offline)
-    decisions = [decide(f, enr, args.epss_threshold) for f in findings]
+    decisions = [decide(f, enr, args.epss_threshold, find_acceptance(f, acceptances), today) for f in findings]
     blocks = [d for d in decisions if d.action == BLOCK]
 
-    summary = render_summary(decisions, suppressed, enr, args.epss_threshold)
+    summary = render_summary(decisions, suppressed, enr, args.epss_threshold, acceptances)
     if args.summary:
         with open(args.summary, "a") as fh:
             fh.write(summary)
     else:
         print(summary)
     if args.report:
-        write_report(args.report, decisions, suppressed, enr)
+        write_report(args.report, decisions, suppressed, enr, acceptances)
+
+    for a, n in acceptance_usage(decisions, acceptances):
+        if a.expires < today:
+            continue  # expired ones that still match show up as blocks below
+        if not n:
+            print(f"::warning title=Unused risk acceptance {a.vuln_id}::matches no finding; remove it")
+        elif (a.expires - today).days <= EXPIRY_WARNING_DAYS:
+            print(f"::warning title=Risk acceptance {a.vuln_id} expires {a.expires}::re-review or remove it")
 
     for d in sorted(blocks, key=_sort_key)[:10]:
         f = d.finding

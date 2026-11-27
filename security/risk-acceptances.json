@@ -1,0 +1,83 @@
+{
+  "$comment": "Reviewed acceptances for HIGH/CRITICAL image findings that have no fix yet. Each needs a reason a reviewer can check and expires at most 90 days out. Changes need code-owner review (see .github/CODEOWNERS). Never covers KEV or fixable findings. Context for all entries below: the app container runs as uid 10001 with cap_drop ALL and no-new-privileges (docker-compose.yml), and the app imports only os and flask.",
+  "acceptances": [
+    {
+      "id": "CVE-2026-76642",
+      "packages": ["bsdutils", "libblkid1", "liblastlog2-2", "libmount1", "libsmartcols1", "libuuid1", "login", "mount", "util-linux"],
+      "reason": "util-linux mount helper flaw; needs a privileged mount. The app never runs mount, and no-new-privileges stops the setuid /usr/bin/mount from gaining root. No Debian fix yet.",
+      "expires": "2027-02-25"
+    },
+    {
+      "id": "CVE-2026-78408",
+      "packages": ["bsdutils", "libblkid1", "liblastlog2-2", "libmount1", "libsmartcols1", "libuuid1", "login", "mount", "util-linux"],
+      "reason": "util-linux nsenter cgroup flaw; needs root to run nsenter. The app never runs it and the container has no capabilities. No Debian fix yet.",
+      "expires": "2027-02-25"
+    },
+    {
+      "id": "CVE-2026-78409",
+      "packages": ["bsdutils", "libblkid1", "liblastlog2-2", "libmount1", "libsmartcols1", "libuuid1", "login", "mount", "util-linux"],
+      "reason": "util-linux X-mount.subdir flaw; needs a privileged mount. The app never runs mount, and no-new-privileges stops the setuid /usr/bin/mount from gaining root. No Debian fix yet.",
+      "expires": "2027-02-25"
+    },
+    {
+      "id": "CVE-2026-78410",
+      "packages": ["bsdutils", "libblkid1", "liblastlog2-2", "libmount1", "libsmartcols1", "libuuid1", "login", "mount", "util-linux"],
+      "reason": "util-linux bind-mount flaw; needs a privileged mount. The app never runs mount, and no-new-privileges stops the setuid /usr/bin/mount from gaining root. No Debian fix yet.",
+      "expires": "2027-02-25"
+    },
+    {
+      "id": "CVE-2026-16742",
+      "packages": ["libsystemd0", "libudev1"],
+      "reason": "systemd-homed privilege escalation; only the shared libraries are installed. systemd-homed and homectl are not in the image. No Debian fix yet.",
+      "expires": "2027-02-25"
+    },
+    {
+      "id": "CVE-2026-54369",
+      "packages": ["libacl1"],
+      "reason": "libacl symlink-traversal privilege escalation; needs a privileged process using libacl on attacker-controlled paths. Nothing in the container runs privileged (uid 10001, no capabilities). No Debian fix yet.",
+      "expires": "2027-02-25"
+    },
+    {
+      "id": "CVE-2025-69720",
+      "packages": ["libncursesw6", "libtinfo6", "ncurses-base", "ncurses-bin"],
+      "reason": "ncurses buffer overflow; terminal library used by bash. The app never starts a shell and does not load curses (checked under gunicorn). No Debian fix yet.",
+      "expires": "2027-02-25"
+    },
+    {
+      "id": "CVE-2026-107494",
+      "packages": ["libssl3t64", "openssl", "openssl-provider-legacy"],
+      "reason": "OpenSSL QUIC frame-queue DoS. Python's ssl module has no QUIC support, gunicorn serves plain HTTP behind nginx (no TLS configured), and the app makes no outbound connections. No Debian fix yet.",
+      "expires": "2027-02-25"
+    },
+    {
+      "id": "CVE-2026-124709",
+      "packages": ["libssl3t64", "openssl", "openssl-provider-legacy"],
+      "reason": "OpenSSL QUIC stream memory-leak DoS. Python's ssl module has no QUIC support, gunicorn serves plain HTTP behind nginx (no TLS configured), and the app makes no outbound connections. No Debian fix yet.",
+      "expires": "2027-02-25"
+    },
+    {
+      "id": "CVE-2026-119373",
+      "packages": ["libsqlite3-0"],
+      "reason": "SQLite FTS5 heap overflow. The app uses no database and sqlite3 is not loaded under gunicorn (checked). No Debian fix yet.",
+      "expires": "2027-02-25"
+    },
+    {
+      "id": "CVE-2026-119374",
+      "packages": ["libsqlite3-0"],
+      "reason": "SQLite corrupted FTS5 index code execution. The app uses no database and sqlite3 is not loaded under gunicorn (checked). No Debian fix yet.",
+      "expires": "2027-02-25"
+    },
+    {
+      "id": "CVE-2026-119379",
+      "packages": ["libsqlite3-0"],
+      "reason": "SQLite session changeset code execution. The app uses no database and sqlite3 is not loaded under gunicorn (checked). No Debian fix yet.",
+      "expires": "2027-02-25"
+    },
+    {
+      "id": "CVE-2026-9538",
+      "packages": ["perl-base"],
+      "reason": "Perl Archive::Tar DoS. Archive::Tar is not installed (perl-base only) and the app never runs perl or handles tar files. Debian status: fix_deferred.",
+      "expires": "2027-02-25"
+    }
+  ]
+}
